@@ -1,9 +1,8 @@
 import logging
 import time
-import yaml
 from enum import Enum
 
-from keys import TELEGRAM_BOT_SECRET
+import yaml
 from telegram import update
 from telegram.ext import (
     Updater,
@@ -15,13 +14,16 @@ from telegram.ext import (
 )
 
 
-from citation_counter import get_latest_citation_count
+from citation_counter import BASE_URL, get_latest_citation_count
+from keys import TELEGRAM_BOT_SECRET
 
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
 
 INTERVAL_S = 3600 * 2
 USER_CONFIG_PATH = "user_config.yml"
@@ -34,12 +36,28 @@ class UserConfig(Enum):
 
 
 def get_subscribed_users() -> dict:
+    """
+    Retrieves the users currently subscribed to the bot
+
+    Returns
+    -------
+    dict
+        dict of subscribed users
+    """
     with open(USER_CONFIG_PATH, 'r') as config:
         res = yaml.safe_load(config)
     return res
 
 
 def add_new_user_to_config(username) -> None:
+    """
+    Adds the newly subscribed user to the user config
+
+    Parameters
+    ----------
+    username
+        username of the newly subscribed user
+    """
     new_user_data = {
         UserConfig.is_subscribed: True,
         UserConfig.last_cite_count: 0,
@@ -53,9 +71,18 @@ def add_new_user_to_config(username) -> None:
 
 
 def check_citations(context: CallbackContext) -> None:
+    """
+    Fetches the latest citation count and, if necessary, sends a message to the relevant 
+    subscribed user
+
+    Parameters
+    ----------
+    context
+        telegram CallbackContext
+    """
     users = get_subscribed_users()
     job = context.job
-    cites = get_latest_citation_count()
+    cites = get_latest_citation_count(BASE_URL)
 
     for user in users.keys():
         if (
@@ -71,6 +98,18 @@ def check_citations(context: CallbackContext) -> None:
 
 
 def start_callback(update: Updater, context: CallbackContext) -> None:
+    """
+    Entry-point for the bot. When a new user calls the relevant command, adds them to the
+    subscribed users and sends them a welcome message.
+
+    Parameters
+    ----------
+    update
+        telegram Updater object
+
+    context
+        telegram CallbackContext
+    """
     user = update.message.from_user
     logger.info(f"User requested start: {user.first_name}")
     logger.info(user)
@@ -84,6 +123,18 @@ def start_callback(update: Updater, context: CallbackContext) -> None:
 
 
 def cancel_callback(update: Updater, context: CallbackContext) -> None:
+    """
+    Callback that removes both the job from the queue and the user from receiving messages
+
+    Parameters
+    ----------
+    update
+        telegram Updater object
+    context
+        telegram CallbackContext
+    """
+    # TODO: This looks to remove the job, and NOT the user. Should probably update this just
+    # to update the relevant config
     user = update.message.from_user
     logger.info(f"User '{user}' cancelled the subscription")
     remove_job_if_exists(update.message.chat_id, context)
@@ -91,7 +142,9 @@ def cancel_callback(update: Updater, context: CallbackContext) -> None:
 
 
 def remove_job_if_exists(name: str, context: CallbackContext) -> bool:
-    """Remove job with given name. Returns whether job was removed."""
+    """
+    Removes a job with the given name
+    """
     current_jobs = context.job_queue.get_jobs_by_name(name)
     if not current_jobs:
         return False
