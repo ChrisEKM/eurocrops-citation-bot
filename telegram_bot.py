@@ -1,6 +1,7 @@
 import logging
 import time
-from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
 
 import yaml
 from telegram import update
@@ -25,11 +26,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-INTERVAL_S = 3600 * 2
+INTERVAL_S = 3600 * 4
 USER_CONFIG_PATH = "user_config.yml"
 
 
-class UserConfig(Enum):
+@dataclass
+class UserConfig():
+    username = 'username'
+    first_name = 'first_name'
     is_subscribed = 'is_subscribed'
     last_cite_count = 'last_cite_count'
     last_notified = 'last_notified'
@@ -46,28 +50,30 @@ def get_subscribed_users() -> dict:
     """
     with open(USER_CONFIG_PATH, 'r') as config:
         res = yaml.safe_load(config)
-    return res
+    return res if res else dict()
 
 
-def add_new_user_to_config(username) -> None:
+def add_new_user_to_config(user: "TelegramUserObject") -> None:
     """
     Adds the newly subscribed user to the user config
 
     Parameters
     ----------
-    username
-        username of the newly subscribed user
+    user_id
+        uuid of the newly subscribed user
     """
     new_user_data = {
+        UserConfig.username: user['username'],
+        UserConfig.first_name: user['first_name'],
         UserConfig.is_subscribed: True,
         UserConfig.last_cite_count: 0,
         UserConfig.last_notified: 0
     }
     existing_users = get_subscribed_users()
     with open(USER_CONFIG_PATH, 'w') as config:
-        existing_users[username] = new_user_data
-        yaml.dump(existing_users, USER_CONFIG_PATH)
-        logger.info(f"Added {username} to config")
+        existing_users[user['id']] = new_user_data
+        yaml.dump(existing_users, config)
+        logger.info(f"Added new user {user['id']} to config")
 
 
 def check_citations(context: CallbackContext) -> None:
@@ -83,11 +89,13 @@ def check_citations(context: CallbackContext) -> None:
     users = get_subscribed_users()
     job = context.job
     cites = get_latest_citation_count(BASE_URL)
+    logger.info(users)
 
     for user in users.keys():
+        logger.info(f"Attempting to fetch citations for {user}")
         if (
-            user.get(UserConfig.is_subscribed.value) and 
-            cites > user.get(UserConfig.last_cite_count.value)
+            users.get(user).get(UserConfig.is_subscribed) and 
+            cites > users.get(user).get(UserConfig.last_cite_count)
         ):
             context.bot.send_message(job.context, "Your citation count changed!!")
             context.bot.send_message(job.context, f"Latest citation count: {cites}")
@@ -113,12 +121,15 @@ def start_callback(update: Updater, context: CallbackContext) -> None:
     user = update.message.from_user
     logger.info(f"User requested start: {user.first_name}")
     logger.info(user)
-    update.message.reply_text(
-        f"Halloooooo {user.first_name}! I'll let you know when you get any new citations!"
-    )
-    update.message.reply_text(
-        f"You can send a `/cancel` to stop me talking :) (But I know you won't do that)"
-    )
+    current_users = get_subscribed_users()
+    if current_users:
+        is_existing_user = user['id'] in current_users.keys()
+
+    msg = f"Welcome back {user.first_name}! I'll let you know when you get any new citations"
+    if not current_users or not is_existing_user:
+        msg = f"Hallo {user.first_name}! Let me fetch a first citation count for you.."
+        add_new_user_to_config(user)
+    update.message.reply_text(msg)
     add_user_job(update, context)
 
 
@@ -164,7 +175,7 @@ def add_user_job(update: Updater, context: CallbackContext) -> None:
     logger.info(f"Successfully added job for {chat_id}")
 
 
-if __name__ == '__main__':
+def run():
     CURRENT_CITATION_COUNT = 0
     updater = Updater(TELEGRAM_BOT_SECRET)
     dispatcher = updater.dispatcher
